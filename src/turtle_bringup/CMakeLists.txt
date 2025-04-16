@@ -30,10 +30,7 @@ install(PROGRAMS
   scripts/dummy_script.py
   scripts/crazy_pizza.py
   scripts/controller.py
-  scripts/crazy_turtle.py
-  scripts/odom_publisher.py
-  scripts/goto_pos.py
-  scripts/turtle_spawner.py
+    scripts/odom_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
