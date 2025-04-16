@@ -8,6 +8,7 @@ from geometry_msgs.msg import Twist, Point, PointStamped
 from turtlesim.msg import Pose
 from turtlesim.srv import Spawn
 from turtlesim_plus_interfaces.srv import GivePosition
+from controller_interfaces.srv import SetTarget, SetParam
 from std_srvs.srv import Empty
 import numpy as np
 import math as m
@@ -18,51 +19,60 @@ class Controller(Node):
         turtle_name = self.get_namespace().replace('/', '')
         node_name = self.get_name()
 
+        self.declare_parameter('frequency', 10.0)
+        self.frequency = self.get_parameter('frequency').get_parameter_value().double_value
+        self.get_logger().info(f'Controller frequency: {self.frequency}')
+
+        self.K_linear = 5.0
+        self.K_angular = 20.0
+
         self.cmd_vel_pub = self.create_publisher(Twist, f'/{turtle_name}/cmd_vel', 10)
         self.create_subscription(Pose, f'/{turtle_name}/pose', self.pose_callback, 10)
         
-        if turtle_name == 'turtle1':
+        if node_name == 'controller':
             self.create_subscription(PointStamped, '/clicked_point', self.rviz_click_callback, 10)
             self.create_subscription(Point, '/mouse_position', self.mouse_callback, 10)
         
-        if turtle_name == 'turtle2':
+        if node_name == 'crazy_turtle':
             self.create_subscription(Pose, '/crazy_pizza', self.crazy_pizza_callback, 10)
 
         self.spawn_pizza_client = self.create_client(GivePosition, '/spawn_pizza')
         self.eat_pizza_client = self.create_client(Empty, f'/{turtle_name}/eat')
+        self.set_target_service = self.create_service(SetTarget, f'/{turtle_name}/cli', self.set_target_callback)
+        self.set_param_service = self.create_service(SetParam, f'/{turtle_name}/set_param', self.set_param_callback)
 
-        self.create_timer(0.01, self.timer_callback)
+        self.create_timer(1.0/self.frequency, self.timer_callback)
 
         self.robot_pose = None
         self.waypoints = []
 
         self.get_logger().info(f'{node_name} has been started')
         
-        if turtle_name == 'turtle2':
-            self.spawn_turtle_client = self.create_client(Spawn, '/spawn_turtle')
-            self.get_logger().info('Waiting for spawn_turtle service...')
-            self.spawn_turtle_client.wait_for_service()
-            self.get_logger().info('Spawn turtle service is available, spawning turtle2...')
-            self.spawn_turtle2()
+        # if turtle_name == 'turtle2':
+        #     self.spawn_turtle_client = self.create_client(Spawn, '/spawn_turtle')
+        #     self.get_logger().info('Waiting for spawn_turtle service...')
+        #     self.spawn_turtle_client.wait_for_service()
+        #     self.get_logger().info('Spawn turtle service is available, spawning turtle2...')
+        #     self.spawn_turtle2()
 
-    def spawn_turtle2(self):
-        req = Spawn.Request()
-        req.x = 5.44
-        req.y = 5.44
-        req.theta = 0.0
-        req.name = 'turtle2'
-        self.get_logger().info('Spawning turtle2')
+    # def spawn_turtle2(self):
+    #     req = Spawn.Request()
+    #     req.x = 5.44
+    #     req.y = 5.44
+    #     req.theta = 0.0
+    #     req.name = 'turtle2'
+    #     self.get_logger().info('Spawning turtle2')
         
-        future = self.spawn_turtle_client.call_async(req)
-        future.add_done_callback(self.turtle_spawned_callback)
+    #     future = self.spawn_turtle_client.call_async(req)
+    #     future.add_done_callback(self.turtle_spawned_callback)
     
-    def turtle_spawned_callback(self, future):
-        try:
-            response = future.result()
-            self.get_logger().info(f'Turtle spawned with name: {response.name}')
-            self.is_turtle_spawned = True
-        except Exception as e:
-            self.get_logger().error(f'Service call failed: {e}')
+    # def turtle_spawned_callback(self, future):
+    #     try:
+    #         response = future.result()
+    #         self.get_logger().info(f'Turtle spawned with name: {response.name}')
+    #         self.is_turtle_spawned = True
+    #     except Exception as e:
+    #         self.get_logger().error(f'Service call failed: {e}')
 
     def pose_callback(self, msg):
         self.robot_pose = np.array([msg.x, msg.y, msg.theta])
@@ -73,6 +83,19 @@ class Controller(Node):
         req.y = y
         self.spawn_pizza_client.call_async(req)
     
+    def set_target_callback(self, request, response):
+        waypoint = np.array([request.target.x, request.target.y])
+        self.waypoints.append(waypoint)
+        self.spawn_pizza(waypoint[0], waypoint[1])
+        self.get_logger().info(f'Set target: {waypoint}')
+        return response
+    
+    def set_param_callback(self, request, response):
+        self.K_linear = request.kp_linear.data
+        self.K_angular = request.kp_angular.data
+        self.get_logger().info(f'Set parameters: K_linear={self.K_linear}, K_angular={self.K_angular}')
+        return response
+
     def eat_pizza(self):
         req = Empty.Request()
         self.eat_pizza_client.call_async(req)
@@ -100,9 +123,14 @@ class Controller(Node):
         self.spawn_pizza(msg.x, msg.y)
     
     def timer_callback(self):
+        if self.robot_pose is None:
+            self.get_logger().debug('Waiting for pose information...')
+            return
+            
         if not self.waypoints:
             self.cmdvel(0.0, 0.0)
             return
+        
         current_target = self.waypoints[0]
 
         delta_x = current_target[0] - self.robot_pose[0]
@@ -113,11 +141,8 @@ class Controller(Node):
         angle_diff = angle - self.robot_pose[2]
         correct_angle = m.atan2(m.sin(angle_diff), m.cos(angle_diff))
 
-        K_linear = 5.0
-        K_angular = 20.0
-
-        vx = K_linear * distance
-        wz = K_angular * correct_angle
+        vx = self.K_linear * distance
+        wz = self.K_angular * correct_angle
 
         max_vx = 10.0
         max_wz = 20.0

@@ -11,16 +11,22 @@ import numpy as np
 
 class OdomPublisher(Node):
     def __init__(self):
-        super().__init__('odom_publisher_node')
-        
+        super().__init__('odom_publisher_node')        
+
+        self.declare_parameter('turtle1_name', 'turtle1')
+        self.declare_parameter('turtle2_name', 'turtle2')
+
+        self.turtle1_name = self.get_parameter('turtle1_name').get_parameter_value().string_value
+        self.turtle2_name = self.get_parameter('turtle2_name').get_parameter_value().string_value
+
         self.tf_broadcaster = TransformBroadcaster(self)
 
         self.odom1_pub = self.create_publisher(Odometry, '/odom1', 10)
         self.odom2_pub = self.create_publisher(Odometry, '/odom2', 10)
         
-        self.create_subscription(Pose, '/turtle1/pose', 
+        self.create_subscription(Pose, f'/{self.turtle1_name}/pose', 
                                 lambda msg: self.pose_callback(msg, 'turtle1', 'turtle1'), 10)
-        self.create_subscription(Pose, '/turtle2/pose', 
+        self.create_subscription(Pose, f'/{self.turtle2_name}/pose', 
                                 lambda msg: self.pose_callback(msg, 'turtle2', 'turtle2'), 10)
         
         self.get_logger().info('odom_publisher_node has been started')
